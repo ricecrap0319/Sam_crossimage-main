@@ -1,0 +1,18 @@
+image_index: 8
+image_name: frame_03666.png
+detection_count: 2
+
+detection_1
+class_id: 0
+score: 0.5156
+xyxy: 397.54, 0.0, 1157.84, 614.5
+xywh: 397.54, 0.0, 760.3, 614.5
+yolo: 0 0.426364 0.252671 0.416831 0.505341
+
+detection_2
+class_id: 0
+score: 0.8086
+xyxy: 756.37, 504.23, 1005.12, 615.58
+xywh: 756.37, 504.23, 248.75, 111.35
+yolo: 0 0.482866 0.460452 0.136375 0.091571
+

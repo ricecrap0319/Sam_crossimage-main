@@ -1,0 +1,11 @@
+image_index: 1
+image_name: Crystal_1.png
+detection_count: 1
+
+detection_1
+class_id: 0
+score: 0.793
+xyxy: 472.8, 167.77, 595.0, 295.85
+xywh: 472.8, 167.77, 122.2, 128.08
+yolo: 0 0.897309 0.448382 0.205381 0.247741
+

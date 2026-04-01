@@ -1,0 +1,11 @@
+image_index: 4
+image_name: Crystal_4.png
+detection_count: 1
+
+detection_1
+class_id: 0
+score: 0.875
+xyxy: 502.86, 6.88, 641.01, 101.17
+xywh: 502.86, 6.88, 138.15, 94.3
+yolo: 0 0.329077 0.046255 0.07949 0.080734
+

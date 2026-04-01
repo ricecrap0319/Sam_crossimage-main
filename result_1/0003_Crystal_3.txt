@@ -1,0 +1,11 @@
+image_index: 3
+image_name: Crystal_3.png
+detection_count: 1
+
+detection_1
+class_id: 0
+score: 0.957
+xyxy: 578.22, 843.24, 762.4, 992.78
+xywh: 578.22, 843.24, 184.18, 149.54
+yolo: 0 0.384351 0.787993 0.10561 0.128363
+

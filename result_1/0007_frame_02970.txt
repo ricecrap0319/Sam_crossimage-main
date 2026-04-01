@@ -1,0 +1,11 @@
+image_index: 7
+image_name: frame_02970.png
+detection_count: 1
+
+detection_1
+class_id: 0
+score: 0.5352
+xyxy: 504.7, 0.0, 1311.99, 691.28
+xywh: 504.7, 0.0, 807.29, 691.28
+yolo: 0 0.497996 0.284242 0.442591 0.568485
+
