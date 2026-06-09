@@ -51,16 +51,16 @@ DEFAULT_FOLDER = PROJECT_ROOT          # file-picker opens here
 # ─────────────────────────────────────────────────────────────────────────────
 # File picker (uses native Windows dialog)
 # ─────────────────────────────────────────────────────────────────────────────
-def pick_image(title="Select reference image", initial_dir=DEFAULT_FOLDER):
-    """Open a native file dialog and return the chosen path, or None."""
+def pick_images(title="Select reference images", initial_dir=DEFAULT_FOLDER):
+    """Open a native file dialog allowing MULTIPLE image selections. Returns list of paths."""
     root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
-    path = filedialog.askopenfilename(
+    paths = filedialog.askopenfilenames(
         title=title,
         initialdir=initial_dir,
         filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.tiff *.tif"), ("All files", "*.*")]
     )
     root.destroy()
-    return path if path else None
+    return list(paths) if paths else []
 
 
 def pick_video(title="Select video file", initial_dir=DEFAULT_FOLDER):
@@ -79,72 +79,102 @@ def pick_video(title="Select video file", initial_dir=DEFAULT_FOLDER):
 # Centroid tracker
 # ─────────────────────────────────────────────────────────────────────────────
 class CentroidTracker:
-    def __init__(self, max_disappeared=90, max_distance=200):
-        self.next_id = 0
-        self.objects = OrderedDict()
+    def __init__(self, max_disappeared=120, max_distance=300):
+        self.next_id     = 0
+        self.objects     = OrderedDict()   # id -> current centroid
+        self.velocity    = OrderedDict()   # id -> (vx, vy)  — estimated pixels/update
         self.disappeared = OrderedDict()
-        self.graveyard = []
-        self.graveyard_ttl = 300
+        self.graveyard   = []              # (centroid, velocity, age)
+        self.graveyard_ttl   = 400
         self.max_disappeared = max_disappeared
-        self.max_distance = max_distance
-        self.total_seen = 0
+        self.max_distance    = max_distance
+        self.total_seen      = 0
 
-    def register(self, centroid):
+    # ── predict where each object will be next update ────────────────────────
+    def _predicted(self, oid):
+        cx, cy = self.objects[oid]
+        vx, vy = self.velocity.get(oid, (0, 0))
+        age = self.disappeared[oid]          # extrapolate further if unseen longer
+        return cx + vx * (age + 1), cy + vy * (age + 1)
+
+    def register(self, centroid, vel=(0, 0)):
+        # Check graveyard — same crystal reappeared nearby?
         best_dist, best_idx = float('inf'), -1
-        for i, (gc, _) in enumerate(self.graveyard):
+        for i, (gc, gv, _) in enumerate(self.graveyard):
             d = np.hypot(centroid[0]-gc[0], centroid[1]-gc[1])
             if d < best_dist:
                 best_dist, best_idx = d, i
         if best_dist < self.max_distance * 1.5 and best_idx >= 0:
-            self.graveyard.pop(best_idx)
+            _, gv, _ = self.graveyard.pop(best_idx)
+            vel = gv   # inherit last known velocity
         else:
             self.total_seen += 1
-        self.objects[self.next_id] = centroid
+        self.objects[self.next_id]     = centroid
+        self.velocity[self.next_id]    = vel
         self.disappeared[self.next_id] = 0
         self.next_id += 1
 
     def deregister(self, oid):
-        self.graveyard.append((self.objects[oid], 0))
-        del self.objects[oid]; del self.disappeared[oid]
+        self.graveyard.append((self.objects[oid], self.velocity[oid], 0))
+        del self.objects[oid]; del self.velocity[oid]; del self.disappeared[oid]
 
     def _age_graveyard(self):
-        self.graveyard = [(c, a+1) for c, a in self.graveyard if a < self.graveyard_ttl]
+        self.graveyard = [(c, v, a+1) for c, v, a in self.graveyard if a < self.graveyard_ttl]
 
     def update(self, centroids):
         self._age_graveyard()
+
         if not centroids:
             for oid in list(self.disappeared):
                 self.disappeared[oid] += 1
                 if self.disappeared[oid] > self.max_disappeared:
                     self.deregister(oid)
             return self.objects
+
         if not self.objects:
             for c in centroids: self.register(c)
             return self.objects
+
         obj_ids = list(self.objects.keys())
-        A = np.array(list(self.objects.values()), dtype=float)
+
+        # Use PREDICTED positions for matching (velocity-aware)
+        A = np.array([self._predicted(oid) for oid in obj_ids], dtype=float)
         B = np.array(centroids, dtype=float)
+
         D = np.sqrt(((A[:,None]-B[None,:])**2).sum(2))
         rows = D.min(1).argsort(); cols = D.argmin(1)[rows]
         used_r, used_c = set(), set()
+
         for r, c in zip(rows, cols):
             if r in used_r or c in used_c: continue
-            if D[r,c] > self.max_distance: continue
+            if D[r, c] > self.max_distance: continue
             oid = obj_ids[r]
-            self.objects[oid] = centroids[c]
+            old_cx, old_cy = self.objects[oid]
+            new_cx, new_cy = centroids[c]
+            # Smooth velocity with exponential moving average
+            old_vx, old_vy = self.velocity[oid]
+            alpha = 0.5
+            self.velocity[oid]   = (alpha*(new_cx-old_cx) + (1-alpha)*old_vx,
+                                    alpha*(new_cy-old_cy) + (1-alpha)*old_vy)
+            self.objects[oid]    = centroids[c]
             self.disappeared[oid] = 0
             used_r.add(r); used_c.add(c)
+
         for r in set(range(D.shape[0]))-used_r:
-            self.disappeared[obj_ids[r]] += 1
-            if self.disappeared[obj_ids[r]] > self.max_disappeared:
-                self.deregister(obj_ids[r])
+            oid = obj_ids[r]
+            self.disappeared[oid] += 1
+            if self.disappeared[oid] > self.max_disappeared:
+                self.deregister(oid)
+
         for c in set(range(D.shape[1]))-used_c:
             self.register(centroids[c])
+
         return self.objects
 
     def reset(self):
-        self.objects.clear(); self.disappeared.clear()
-        self.graveyard.clear(); self.next_id = 0; self.total_seen = 0
+        self.objects.clear(); self.velocity.clear()
+        self.disappeared.clear(); self.graveyard.clear()
+        self.next_id = 0; self.total_seen = 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -829,10 +859,10 @@ def run(args):
          'desc':'Overlap threshold (x0.01) to merge duplicate boxes. Lower = stricter.'},
         {'name':'Process every N','min':1,   'max':60,    'value':6,     'step':1,
          'desc':'Run SAM3 every N frames. Higher = faster. Try 10-20 for real-time.'},
-        {'name':'Memory (frames)','min':5,   'max':300,   'value':90,    'step':5,
+        {'name':'Memory (frames)','min':5,   'max':400,   'value':120,   'step':5,
          'desc':'How long tracker remembers a disappeared crystal.'},
-        {'name':'Match radius',   'min':10,  'max':500,   'value':200,   'step':10,
-         'desc':'Max pixel movement between frames for same crystal.'},
+        {'name':'Match radius',   'min':10,  'max':1000,  'value':350,   'step':10,
+         'desc':'Max pixels a crystal can move and still match. Increase for fast crystals.'},
     ]
 
     panel   = SliderPanel(1100, params)
@@ -842,25 +872,31 @@ def run(args):
 
     with autocast_ctx:
         while True:
-            # ── Pick reference image via file dialog ─────────────────────────
-            if args.ref:
-                ref = args.ref
+            # ── Pick reference images via file dialog (multi-select) ──────────
+            if args.refs:
+                ref_paths = args.refs
             else:
-                print("Select reference image...")
-                ref = pick_image("Select reference image — pick any image from your folder")
-                if not ref: break
+                print("Select reference image(s) — hold Ctrl/Shift to select multiple...")
+                ref_paths = pick_images(
+                    "Select reference images (Ctrl+click for multiple) — then draw a box on each")
+                if not ref_paths: break
 
-            # ── Draw box on reference ─────────────────────────────────────────
-            pil1, box1 = setup_screen(ref, "")
-            if pil1 is None: break
-
-            # ── Extract prompt ────────────────────────────────────────────────
-            print("Extracting SAM3 prompt from reference...")
+            # ── Draw box on each reference ────────────────────────────────────
             confidence = params[0]['value'] / 100.0
             processor  = Sam3Processor(model, confidence_threshold=confidence)
-            p1, pm1 = extract_prompt(processor, pil1, box1)
-            prompts = [(p1, pm1)]
-            print("Prompt ready.")
+            prompts = []
+            cancelled = False
+            for idx, ref in enumerate(ref_paths):
+                label = f"{idx+1}/{len(ref_paths)}"
+                pil_ref, box_ref = setup_screen(ref, label)
+                if pil_ref is None:
+                    cancelled = True; break
+                print(f"Extracting prompt from reference {label}: {os.path.basename(ref)}")
+                p, pm = extract_prompt(processor, pil_ref, box_ref)
+                prompts.append((p, pm))
+
+            if cancelled or not prompts: break
+            print(f"{len(prompts)} reference prompt(s) ready.")
 
             # ── Choose source ─────────────────────────────────────────────────
             source = source_select_screen(force_video=args.video,
@@ -881,7 +917,7 @@ def run(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Crystal detector — SAM3")
-    ap.add_argument("--ref",        default=None, help="Reference image (skips file picker)")
+    ap.add_argument("--refs",       default=None, nargs="+", help="One or more reference images (skips file picker)")
     ap.add_argument("--video",      default=None, help="Video file (skips source-select screen)")
     ap.add_argument("--camera",     type=int, default=None, help="Camera index (skips source-select screen)")
     ap.add_argument("--checkpoint", default=None, help="Path to sam3.pt")
